@@ -1,0 +1,91 @@
+"""Indicator extraction, checksums and redaction."""
+import os
+
+from babelguard.indicators import (Indicator, b58encode_check, bech32_encode, bech32_ok, extract,
+                                   luhn_ok, redact, verhoeff_digit, verhoeff_ok)
+
+
+def kinds(msg):
+    return {(i.kind, i.value) for i in extract(msg)}
+
+
+def test_defanged_and_disguised_links():
+    assert ("domain", "sbi-kyc.com") in kinds("visit hxxps://sbi-kyc[.]com/login now")
+    assert ("domain", "sbi-kyc.com") in kinds("visit sbi-kyc dot com")
+    assert ("domain", "paytm-kyc.in") in kinds("pаytm-kyc.in")           # Cyrillic а
+    assert ("domain", "refund.co") in kinds("re​fund.co")
+
+
+def test_shorteners_and_messaging_links_keep_their_path():
+    assert ("url", "bit.ly/abc123") in kinds("click https://bit.ly/abc123.")
+    assert ("url", "t.me/refunddesk") in kinds("join t.me/refunddesk")
+
+
+def test_file_names_are_not_domains():
+    assert not {k for k in kinds("open invoice.pdf or setup.apk") if k[0] == "domain"}
+
+
+def test_phones_in_any_digits():
+    want = ("phone", "+919876543210")
+    assert want in kinds("call 98765 43210")
+    assert want in kinds("कॉल करें ९८७६५ ४३२१०")
+    assert want in kinds("ଫୋନ୍ କରନ୍ତୁ ୯୮୭୬୫୪୩୨୧୦")
+    assert want in kinds("+91-98765-43210")
+    assert ("phone", "+447700900123") in kinds("ring +44 7700 900123")
+
+
+def test_upi_is_not_email_and_email_is_not_upi():
+    k = kinds("pay refund.help@ybl or mail help@refund-desk.com")
+    assert ("upi", "refund.help@ybl") in k
+    assert ("email", "help@refund-desk.com") in k
+    assert ("upi", "help@refund-desk") not in k
+
+
+def test_btc_checksums():
+    genesis = "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
+    assert ("btc", genesis) in kinds(f"send to {genesis}")
+    broken = genesis[:-1] + "b"
+    assert not any(k[0] == "btc" for k in kinds(f"send to {broken}"))
+    seg = bech32_encode("bc", [0] + [ord(c) % 32 for c in "w508d6qejxtdg4c0yrygtnc2fpsr8t"])
+    assert bech32_ok(seg) and ("btc", seg) in kinds(f"wallet {seg}")
+    assert not bech32_ok(seg[:-1] + ("q" if seg[-1] != "q" else "p"))
+
+
+def test_tron_and_eth():
+    tron = b58encode_check(b"\x41" + os.urandom(20))
+    assert tron.startswith("T") and ("tron", tron) in kinds(f"USDT TRC20: {tron}")
+    eth = "0x" + "ab" * 20
+    assert ("eth", eth) in kinds(f"ERC20 {eth.upper().replace('0X', '0x')}")
+
+
+def test_cards_and_aadhaar_are_not_phones():
+    assert not any(k[0] == "phone" for k in kinds("card 4111 1111 1111 1111"))
+    base = "23456789012"
+    aadhaar = base + verhoeff_digit(base)
+    assert verhoeff_ok(aadhaar)
+    assert not any(k[0] == "phone" for k in kinds(f"aadhaar {aadhaar}"))
+
+
+def test_checksum_helpers():
+    assert luhn_ok("4111111111111111") and not luhn_ok("4111111111111112")
+    base = "98765432101"
+    good = base + verhoeff_digit(base)
+    assert verhoeff_ok(good)
+    bad = good[:-1] + str((int(good[-1]) + 1) % 10)
+    assert not verhoeff_ok(bad)
+
+
+def test_redaction_keeps_scammer_details_and_hides_victims():
+    base = "23456789012"
+    aadhaar = base + verhoeff_digit(base)
+    msg = (f"OTP 482913 for card 4111-1111-1111-1111, Aadhaar {aadhaar}, PAN ABCDE1234F. "
+           "Pay refund.help@ybl or call 98765 43210")
+    r = redact(msg)
+    for secret in ("482913", "4111", aadhaar, "ABCDE1234F"):
+        assert secret not in r
+    assert "refund.help@ybl" in r and "98765 43210" in r
+    assert redact("ओटीपी ५५५१२३ है") == "ओटीपी [OTP] है"
+
+
+def test_indicator_is_hashable_value():
+    assert Indicator("upi", "a@ybl") == Indicator("upi", "a@ybl")
