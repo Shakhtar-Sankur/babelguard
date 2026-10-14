@@ -10,6 +10,7 @@ B-cubed precision/recall/F1 against the true campaigns.
 import json
 import os
 import platform
+import resource
 import sys
 import time
 
@@ -47,6 +48,9 @@ def main(n=100000, c=2000, out="out"):
                           "max": round(float(lat.max()) * 1e3, 1)},
            "bcubed": {"precision": round(p, 4), "recall": round(r, 4), "f1": round(f, 4)},
            "indicators_blocked": e.stats["indicators_blocked"],
+           "peak_memory_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1),
+           "latency_ms_by_tenth": [round(float(np.percentile(lat[k * n // 10:(k + 1) * n // 10], 99)) * 1e3, 3)
+                                   for k in range(10)],
            "hardware": f"{platform.processor() or platform.machine()}, 1 core (Python)"}
     os.makedirs(out, exist_ok=True)
     json.dump(rep, open(os.path.join(out, f"bench_engine_{n}.json"), "w"), indent=1)
