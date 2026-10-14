@@ -10,12 +10,20 @@ Scam operations reuse one playbook across many languages. Most detectors are bui
 English, so the people writing in other languages get the least protection. Babelguard is built
 for them first.
 
-## Status: M0 (core, tested)
+## Status
+
+**M1 in progress: a global benchmark.** See [docs/M1_plan.md](docs/M1_plan.md). The largest open
+set of reported scam SMS (IMC 2025, 33,869 messages in 49 languages) is 65% English, and only 0.8%
+is in South Asian languages and 0.1% in African ones. 96 scam templates appear in two or more
+languages.
+
+### M0 (core, tested)
 
 | Module | What it does |
 |---|---|
 | `babelguard/normalize.py` | **Script-aware cleaning.** Removes the invisible characters and look-alike letters scammers use to slip past filters, and keeps the same characters where a language needs them: ZWJ and ZWNJ in Hindi, Bengali, Odia, Malayalam, Persian and Urdu; ZWSP in Thai and Khmer; emoji sequences. Every removal is counted, because a disguise attempt is itself evidence. Native digits (०-९, ୦-୯, ٠-٩, ๐-๙ …) become ASCII. |
 | `babelguard/indicators.py` | **What the scam needs the victim to use:** links (refanged, look-alikes folded), phone numbers in any digits, UPI IDs, emails, and BTC, ETH and TRON wallets (checksums verified). Card and Aadhaar numbers are recognised by checksum and never mistaken for phones. `redact()` masks victims' OTPs, cards, Aadhaar and PAN numbers before anything is shared. |
+| `babelguard/dataset.py`, `lsh.py`, `taxonomy.py` | **Benchmark layer.** A global scam taxonomy by pretext, with Stajano-Wilson lures. Loaders re-redact every record and keep its licence. Near-copies are grouped with MinHash LSH, including matches through translations. Splits are made by template, so no scam template sits in both training and test data. |
 | `babelguard/campaigns.py` | **Campaign linking.** Messages in any language join one campaign when they share an indicator or are near copies. A slot for a multilingual encoder adds linking by meaning across translations. Well-known legitimate domains and over-common indicators never link. |
 
 ```python
