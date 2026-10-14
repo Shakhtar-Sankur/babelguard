@@ -73,6 +73,30 @@ and signatures, and dropping shingle sets of non-representatives, which already 
 rare multi-second pauses, which grow with the heap and are most likely Python's cyclic garbage
 collector walking millions of objects.
 
+### Memory and pauses fixed (14 Oct 2026)
+
+Two changes, after measuring where memory and time went:
+
+- Representatives kept their 5-character shingles as Python sets of strings; they now keep the
+  sorted 64-bit hashes MinHash already computes (8 bytes each), which are deterministic across
+  processes, so recovery from the log is unaffected.
+- Every 20,000 messages the engine moves its long-lived objects out of Python's garbage collector
+  (`gc.freeze()`); full collections had been rescanning millions of objects.
+
+Same 1,000,000-message stream, same machine:
+
+| | before | after |
+|---|---|---|
+| Engine memory | (not measured separately) | **203 MB, 0.21 KB per message** |
+| Process peak, including the benchmark's own copy of the stream | 5.2 GB | **1.05 GB** |
+| Longest single pause | 4.3 s | **96 ms** |
+| p50 / p99 latency | 1.1 / 3.3 ms | 1.1 / 3.3 ms |
+| Throughput | 803 messages/s | 786 messages/s |
+| B-cubed precision / recall, campaigns found | 0.9974 / 0.9930, 15,258 | **identical** |
+
+At 100,000 messages engine memory fell from 3.7 KB to 0.35 KB per message (365 MB to 34 MB).
+At this rate 100 million messages need about 20 GB, within one server.
+
 ### M3.5 durable store and recovery (14 Oct 2026)
 
 `babelguard/store.py`: every message goes to an append-only log (one CRC32-checked record per
@@ -91,3 +115,6 @@ client resent from the last durable message.
 | Messages lost | **0** |
 | Campaigns identical to an uninterrupted run | **yes** (all 20,000 messages, 2,374 campaigns) |
 | Most log records replayed in one recovery | 2,000 (the snapshot interval; 12,000 before the post-recovery snapshot) |
+
+Rerun after the memory changes below (shingles as hash arrays, frozen garbage collection): again
+50 kills, nothing lost, identical campaigns.
