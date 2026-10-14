@@ -32,22 +32,23 @@ def main(n=100000, c=2000, out="out"):
     n, c = int(n), int(c)
     recs = load_imc25("data/private/imc25.csv")
     group_templates(recs)
-    msgs = list(stream(recs, n_messages=n, n_campaigns=c, seed=0))
+    truth = np.empty(n, dtype=np.int64)          # messages are generated as they are fed, not held
     gc.collect()
     rss0 = _rss_mb()
     e = CampaignEngine()
     lat = np.empty(n)
     ids = np.empty(n, dtype=np.int64)
     t0 = time.perf_counter()
-    for k, (text, lang, _, t) in enumerate(msgs):
+    for k, (text, lang, camp, t) in enumerate(stream(recs, n_messages=n, n_campaigns=c, seed=0)):
+        truth[k] = camp
         s = time.perf_counter()
         ids[k] = e.ingest(text, lang, t).message
         lat[k] = time.perf_counter() - s
     wall = time.perf_counter() - t0
     engine_mb = _rss_mb() - rss0
     pred = [e.find(int(i)) for i in ids]
-    p, r, f = bcubed(pred, [m[2] for m in msgs])
-    true_campaigns = len({m[2] for m in msgs})
+    p, r, f = bcubed(pred, truth.tolist())
+    true_campaigns = len(set(truth.tolist()))
     rep = {"load": "synthetic, from real IMC 2025 templates", "messages": n, "campaigns_true": true_campaigns,
            "campaigns_found": len(set(pred)), "seconds": round(wall, 1),
            "messages_per_second": round(n / wall, 1), "messages_per_day_one_core": int(n / wall * 86400),
