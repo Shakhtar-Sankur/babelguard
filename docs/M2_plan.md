@@ -29,7 +29,33 @@ for each non-English report. That provides an answer key that does not depend on
   - the share of true pairs linked at a similarity threshold calibrated so that only 1% of pairs
     from different templates would be linked.
 
-Results go in section 3 once the run finishes.
+### Results (14 Oct 2026; multilingual-e5-small on 4 CPU cores, embedding took 14.6 minutes)
+
+| | |
+|---|---|
+| Non-English queries (45+ languages) | 11,333 |
+| Correct translation ranked first (recall@1) | **85.1%** |
+| In the top 10 (recall@10) | **94.6%** |
+| Plain text matching connects a message to its own translation | **1.5%** |
+| True pairs linked at a threshold with a 1% false-link rate (cosine 0.884) | **89.6%** |
+
+Linking by meaning takes cross-language recognition from 1.5% to 85%. It is weakest where the
+script or the way of writing differs most from what the encoder was trained on:
+
+| Language | Messages | Recall@1 | Note |
+|---|---|---|---|
+| Spanish | 4,556 | 0.918 | |
+| Hindi | 168 | 0.905 | |
+| Indonesian | 322 | 0.820 | |
+| Urdu | 70 | 0.800 | |
+| Arabic | 55 | 0.636 | |
+| Japanese | 214 | 0.519 | |
+| Greek | 79 | 0.494 | many messages are Greek typed in Latin letters |
+| Thai | 64 | 0.344 | no spaces between words |
+
+Caveat: the answer key is the dataset's own English translations, which may be machine-generated;
+real-world linking between independently written variants may be harder. Languages with under 30
+messages are in `out/linking_eval.json` but are not ranked here.
 
 ## Part 2: the protection gap (next)
 
