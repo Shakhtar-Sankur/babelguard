@@ -160,22 +160,67 @@ def _url(raw):
     return Indicator("domain", host)
 
 
-def _phone(raw):
-    lead = raw.strip().startswith("+")
-    d = re.sub(r"\D", "", raw)
-    if not 10 <= len(d) <= 15:
+# Mobile numbering plans used to normalise numbers when the sender's country is known:
+# country -> (calling code, national number lengths, mobile prefix). Not exhaustive; numbers from
+# other countries are kept as digits and still link through link_key().
+PLANS = {
+    "IN": ("91", (10,), r"[6-9]"), "BD": ("880", (10,), r"1[3-9]"), "PK": ("92", (10,), r"3"),
+    "LK": ("94", (9,), r"7"), "NP": ("977", (10,), r"9[78]"), "ID": ("62", (9, 10, 11, 12), r"8"),
+    "PH": ("63", (10,), r"9"), "TH": ("66", (9,), r"[689]"), "VN": ("84", (9,), r"[35789]"),
+    "MY": ("60", (9, 10), r"1"), "KE": ("254", (9,), r"[17]"), "NG": ("234", (10,), r"[789][01]"),
+    "GH": ("233", (9,), r"[25]"), "MZ": ("258", (9,), r"8[2-7]"), "ZA": ("27", (9,), r"[6-8]"),
+    "ET": ("251", (9,), r"9"), "EG": ("20", (10,), r"1"), "GB": ("44", (10,), r"7"),
+    "US": ("1", (10,), r"[2-9]"), "BR": ("55", (11,), r"\d\d9"), "ES": ("34", (9,), r"[67]"),
+    "FR": ("33", (9,), r"[67]"),
+}
+_BY_CODE = sorted(((cc, c) for c, (cc, _, _) in PLANS.items()), key=lambda x: -len(x[0]))
+
+
+def _national(d, country):
+    cc, lengths, mobile = PLANS[country]
+    for prefix in ("00" + cc, cc, "0"):
+        if d.startswith(prefix) and len(d) - len(prefix) in lengths:
+            d = d[len(prefix):]
+            break
+    if len(d) in lengths and re.match(mobile, d):
+        return "+" + cc + d
+    return None
+
+
+def _phone(raw, country=None):
+    """Canonical phone number: +<country code><number> when the country is known (from a + or
+    00 prefix, or from the `country` hint), otherwise the national digits."""
+    s = raw.strip()
+    d = re.sub(r"\D", "", s)
+    if not 9 <= len(d) <= 15:
         return None
-    if not lead and len(d) == 10 and d[0] in "6789":
-        return Indicator("phone", "+91" + d)          # Indian mobile without country code
-    if not lead and len(d) == 11 and d[0] == "0" and d[1] in "6789":
-        return Indicator("phone", "+91" + d[1:])
-    if not lead and len(d) == 12 and d.startswith("91") and d[2] in "6789":
+    international = s.startswith("+") or d.startswith("00")
+    if international:
+        d = d[2:] if d.startswith("00") else d
+        for cc, c in _BY_CODE:
+            if d.startswith(cc):
+                v = _national(d, c)
+                if v:
+                    return Indicator("phone", v)
         return Indicator("phone", "+" + d)
-    return Indicator("phone", ("+" if lead else "") + d)
+    if country in PLANS:
+        v = _national(d, country)
+        if v:
+            return Indicator("phone", v)
+    return Indicator("phone", d[1:] if d.startswith("0") and len(d) > 9 else d)
 
 
-def extract(message):
-    """Set of Indicators in a message (any language)."""
+def link_key(ind):
+    """What two indicators must share to link: phone numbers compare on their last 9 digits, so
+    the same number written with or without its country code still links."""
+    if ind.kind == "phone":
+        return ("phone", re.sub(r"\D", "", ind.value)[-9:])
+    return (ind.kind, ind.value)
+
+
+def extract(message, country=None):
+    """Set of Indicators in a message (any language). `country` (ISO 3166 alpha-2) is a hint
+    for numbers written without a country code."""
     canon = refang(normalize(message).canonical)
     found, spans = set(), []
     for m in EMAIL_RE.finditer(canon):
@@ -212,7 +257,7 @@ def extract(message):
         d = re.sub(r"\D", "", m.group())
         if (13 <= len(d) <= 19 and luhn_ok(d)) or (len(d) == 12 and verhoeff_ok(d) and d[0] not in "01"):
             continue                                   # a card or Aadhaar number, not a phone
-        ind = _phone(m.group())
+        ind = _phone(m.group(), country)
         if ind:
             found.add(ind)
     return found

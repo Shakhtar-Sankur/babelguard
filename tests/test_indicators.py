@@ -2,7 +2,7 @@
 import os
 
 from babelguard.indicators import (Indicator, b58encode_check, bech32_encode, bech32_ok, extract,
-                                   luhn_ok, redact, verhoeff_digit, verhoeff_ok)
+                                   link_key, luhn_ok, redact, verhoeff_digit, verhoeff_ok)
 
 
 def kinds(msg):
@@ -25,13 +25,25 @@ def test_file_names_are_not_domains():
     assert not {k for k in kinds("open invoice.pdf or setup.apk") if k[0] == "domain"}
 
 
-def test_phones_in_any_digits():
-    want = ("phone", "+919876543210")
-    assert want in kinds("call 98765 43210")
-    assert want in kinds("कॉल करें ९८७६५ ४३२१०")
-    assert want in kinds("ଫୋନ୍ କରନ୍ତୁ ୯୮୭୬୫୪୩୨୧୦")
-    assert want in kinds("+91-98765-43210")
+def test_phones_in_any_digits_and_any_country():
+    india = ("phone", "+919876543210")
+    assert india in kinds("+91-98765-43210")
+    assert india in kinds("0091 98765 43210")
+    assert ("phone", "9876543210") in kinds("call 98765 43210")              # no country assumed
+    assert india in {(i.kind, i.value) for i in extract("कॉल करें ९८७६५ ४३२१०", country="IN")}
+    assert india in {(i.kind, i.value) for i in extract("ଫୋନ୍ କରନ୍ତୁ ୯୮୭୬୫୪୩୨୧୦", country="IN")}
     assert ("phone", "+447700900123") in kinds("ring +44 7700 900123")
+    mz = {(i.kind, i.value) for i in extract("Neste Nr. M-Pesa:857296999", country="MZ")}
+    assert ("phone", "+258857296999") in mz
+    ke = {(i.kind, i.value) for i in extract("Tuma pesa 0712 345 678", country="KE")}
+    assert ("phone", "+254712345678") in ke
+    assert ("phone", "+639171234567") in kinds("GCash support +63 917 123 4567")
+
+
+def test_same_number_with_and_without_country_code_links():
+    a = extract("call +91 98765 43210")
+    b = extract("call 98765 43210")
+    assert {link_key(x) for x in a} == {link_key(x) for x in b}
 
 
 def test_upi_is_not_email_and_email_is_not_upi():

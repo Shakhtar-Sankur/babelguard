@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .indicators import extract
+from .indicators import extract, link_key
 from .normalize import normalize
 
 LEGIT_SUFFIXES = (".gov.in", ".nic.in", ".gov", ".gov.uk", ".gob.mx", ".go.th", ".go.ke", ".gov.ng")
@@ -60,23 +60,23 @@ class Campaign:
     links: list = field(default_factory=list)      # (i, j, reason) edges that formed it
 
 
-def link(messages, max_df=0.2, text_threshold=0.6, embed=None, embed_threshold=0.85):
+def link(messages, max_df=0.2, text_threshold=0.6, embed=None, embed_threshold=0.85, country=None):
     """Group messages into campaigns. Returns campaigns, largest first; singletons included."""
     n = len(messages)
     dsu, edges = _DSU(n), []
-    inds = [extract(m) for m in messages]
+    inds = [extract(m, country) for m in messages]
     by_ind = defaultdict(list)
     for i, s in enumerate(inds):
         for ind in s:
             if not legit(ind):
-                by_ind[ind].append(i)
+                by_ind[link_key(ind)].append(i)
     limit = max(2, int(max_df * n))
     for ind, idx in by_ind.items():
         if len(idx) > limit:
             continue
         for j in idx[1:]:
             if dsu.find(idx[0]) != dsu.find(j):
-                edges.append((idx[0], j, f"{ind.kind}:{ind.value}"))
+                edges.append((idx[0], j, f"{ind[0]}:{ind[1]}"))
             dsu.union(idx[0], j)
     sh = [shingles(m) for m in messages]
     for i in range(n):

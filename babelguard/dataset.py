@@ -40,6 +40,8 @@ class Record:
     scam_type: str = None
     lures: list = field(default_factory=list)
     translation: str = ""           # English, when the source provides one
+    variety: str = "native"          # native | romanized | code-mixed (how the language is written)
+    country: str = ""                # ISO 3166 alpha-2, when known
     source: str = ""
     license: str = ""
     verified: bool = False
@@ -125,4 +127,80 @@ def split(records, fractions=(("train", 0.7), ("dev", 0.1), ("test", 0.2)), seed
         name = next((nm for nm, b in bounds if acc < b), bounds[-1][0])
         out[name].extend(groups[k])
         acc += len(groups[k])
+    return out
+
+
+def load_bengali_smishing(directory):
+    """Bengali SMS Smishing Dataset (MIT): Bengali script, Banglish (Bengali in Latin letters),
+    code-mixed and English. smish -> scam, promo -> spam, normal -> legit."""
+    import pyarrow.parquet as pq
+    labels = {"smish": "scam", "promo": "spam", "normal": "legit"}
+    variety = {"Bengali": ("bn", "native"), "Banglish": ("bn", "romanized"),
+               "CodeMix": ("bn", "code-mixed"), "English": ("en", "native")}
+    out = []
+    for split_name in ("train", "validation", "test"):
+        rows = pq.read_table(f"{directory}/{split_name}.parquet").to_pylist()
+        for n, r in enumerate(rows):
+            lang, var = variety.get(r["source"], ("und", "native"))
+            out.append(Record(id=f"bnsmish-{split_name}-{n}", text=redact(r["text"]), lang=lang,
+                              region="south_asia" if lang == "bn" else "global",
+                              label=labels.get(r["label"], "unknown"), variety=var,
+                              source="bengali_smishing", license="MIT"))
+    return out
+
+
+def load_moz_smishing(path):
+    """MOZ-Smishing (AfricaNLP 2025): Mozambican Portuguese, mobile money. Licensed
+    creativeml-openrail-m and containing names: evaluated locally, never redistributed."""
+    out = []
+    with open(path, encoding="utf-8", errors="replace", newline="") as f:
+        for r in csv.DictReader(f):
+            out.append(Record(id=f"moz-{r['id']}", text=redact(r["text"]), lang="pt", region="africa",
+                              label="scam" if r["label"].strip().lower() == "smishing" else "legit",
+                              scam_type="bank_payment" if r["label"].strip().lower() == "smishing" else None,
+                              country="MZ", source="moz_smishing", license="creativeml-openrail-m"))
+    return out
+
+
+def load_singlish(path):
+    """Translated Singlish SMS (CC BY 4.0): everyday messages from the NUS SMS Corpus with native
+    English translations. All genuine, so they serve as hard negatives in Southeast Asia."""
+    import openpyxl
+    wb = openpyxl.load_workbook(path, read_only=True)
+    ws = wb["ALL_TRANSLATIONS"]
+    out = []
+    for n, row in enumerate(ws.iter_rows(values_only=True)):
+        text, translation = (row[0] or "").strip(), (row[1] or "").strip()
+        if not text:
+            continue
+        out.append(Record(id=f"singlish-{n}", text=redact(text), lang="en", region="southeast_asia",
+                          label="legit", translation=redact(translation), variety="code-mixed",
+                          country="SG", source="singlish_sms", license="CC-BY-4.0"))
+    return out
+
+
+def review_sample(records, per_label=100, seed=7, labels=("scam", "spam", "legit")):
+    """Records for native speakers to check: for each language (and way of writing it) and each
+    imported label, up to `per_label` records. One record per template group comes first, so large
+    campaigns cannot crowd out the rest; only then are second copies taken from the largest groups."""
+    rng = random.Random(seed)
+    cells = defaultdict(lambda: defaultdict(list))
+    for r in records:
+        if r.label in labels and r.lang != "und":
+            cells[(r.lang, r.variety, r.label)][r.group].append(r)
+    out = []
+    for key in sorted(cells):
+        groups = list(cells[key].values())
+        rng.shuffle(groups)
+        for g in groups:
+            rng.shuffle(g)
+        groups.sort(key=len, reverse=True)
+        picked, depth = [], 0
+        while len(picked) < per_label and any(len(g) > depth for g in groups):
+            batch = [g[depth] for g in groups if len(g) > depth]
+            if depth == 0:
+                rng.shuffle(batch)
+            picked.extend(batch[:per_label - len(picked)])
+            depth += 1
+        out.extend(picked)
     return out

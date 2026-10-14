@@ -52,10 +52,21 @@ scams, and a real person's name that the anonymisation missed. Imported labels t
 |---|---|---|---|---|
 | IMC 2025 smishing (UCL, IMDEA) | 49 | 33,869 | CC BY 4.0 | Seed and coverage baseline; sample for verification |
 | Bengali SMS smishing (SmishDetect-LLM) | Bengali, Banglish, code-mixed | 7,005 | MIT | South Asia |
-| MOZ-Smishing (AfricaNLP 2025) | Mozambican Portuguese (mobile money) | — | open (to confirm) | Africa |
-| Translated Singlish SMS (Data, 2026) | Singlish | 2,788 | CC BY | Southeast Asia |
-| AZ-SC | Azerbaijani | 4,538 | to confirm | Caucasus and Central Asia |
+| MOZ-Smishing (AfricaNLP 2025) | Mozambican Portuguese (mobile money) | 2,561 | creativeml-openrail-m (use-restricted) | Africa; evaluated locally, never redistributed (raw text has names) |
+| Translated Singlish SMS (Data, 2026) | Singlish | 2,788 | CC BY 4.0 | Southeast Asia; genuine messages (hard negatives) |
+| AZ-SC | Azerbaijani | 4,538 | no public download found | Ask the author |
 | **New collection** | the gaps above | — | ours, consented | Partners and volunteers: South Asia, Africa, Southeast Asia, Arabic |
+
+### Two more gaps found while building the sample (14 Oct)
+
+- **Genuine messages exist for only 4 of 49 languages** (Bengali, Mozambican Portuguese,
+  Singlish and English). In the other 45 there is no open set of real messages, so nobody can
+  measure **false alarms**, where detectors are known to break outside English. Collecting genuine
+  messages (real OTPs, bank alerts, delivery and government notices) is therefore as important as
+  collecting scams, and less sensitive.
+- **Random splits leak templates.** In the Bengali SMS smishing dataset's own random split, 15.8%
+  of test messages (22.5% of test scams) have a near-copy in its training data, so scores on that
+  split are optimistic. Random splitting is common practice. Babelguard splits by template group.
 
 ## 3. Benchmark v0 design
 
@@ -82,12 +93,22 @@ scams, and a real person's name that the anonymisation missed. Imported labels t
 | SEA-LION / AI Singapore and Southeast Asian NLP groups | Southeast Asian languages |
 | National CERTs (CERT-In, ThaiCERT, KE-CIRT, …) | Real advisories; later, the alert feed |
 
-## 5. Next steps
+## 5. Status and next steps
 
-1. Loaders for the Bengali (MIT) and Singlish (CC BY) sets; confirm the MOZ-Smishing and AZ-SC
-   licences.
-2. Draw the stratified sample for checking (24 languages).
-3. Labelling tool: a small local web page that shows one message and records the label, type,
-   lures and a privacy flag.
-4. The professor and the university: ethics approval for new collection, and help recruiting
-   annotators.
+Done:
+- Loaders for all four sources, each with a pinned checksum (`babelguard/sources.py`;
+  `python -m babelguard.sources fetch`).
+- A stratified review sample (`tools/make_review_sample.py`): 3,754 records in 49 languages.
+  One record per template comes first, and imported labels are kept apart from the annotators.
+- A labelling page (`tools/label.html`): offline, keyboard-driven, works on phones, handles
+  right-to-left text, and saves progress in the browser. It was checked in Chromium with
+  synthetic data.
+- An agreement script (`tools/agreement.py`): Cohen's kappa, a confusion table, and the ids that
+  go to a third annotator.
+
+Next:
+1. Recruit two native speakers per language. Start with the languages that have the most
+   messages, then fill the gaps.
+2. Collect genuine messages in the 45 languages that have none.
+3. University ethics approval for new collection, with the professor.
+4. Phone-number plans for more countries as data arrives.

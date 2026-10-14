@@ -84,3 +84,25 @@ def test_placeholder_only_messages_do_not_chain(tmp_path):
                   ("【<NAMED_ENTITY>", "", "Japanese", "delivery")])
     recs = load_imc25(p)
     assert group_templates(recs) == 3
+
+
+def test_review_sample_spreads_over_templates_first():
+    from babelguard.dataset import Record, review_sample
+    recs = []
+    for i in range(50):                       # one big campaign
+        recs.append(Record(id=f"big{i}", text="x", lang="hi", region="south_asia", label="scam", group=0))
+    for g in range(1, 8):                     # seven small ones
+        recs.append(Record(id=f"s{g}", text="y", lang="hi", region="south_asia", label="scam", group=g))
+    picked = review_sample(recs, per_label=10)
+    assert len(picked) == 10
+    assert {r.group for r in picked} == set(range(8))       # every template before any second copy
+    assert sum(r.group == 0 for r in picked) == 3
+
+
+def test_kappa():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("agreement", "tools/agreement.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    assert m.kappa(["scam"] * 4, ["scam"] * 4) == 1.0
+    assert abs(m.kappa(["scam", "legit", "scam", "legit"], ["scam", "legit", "legit", "scam"])) < 1e-9

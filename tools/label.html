@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Babelguard labelling</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1b; --muted: #6b6b66; --line: #dcdcd6;
+    --accent: #2457c5; --accent-text: #ffffff; --scam: #b3261e; --spam: #8a5a00; --legit: #1e7a3c;
+    --chip: #eef0f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #151515; --panel: #1f1f1f; --text: #ececea; --muted: #a3a39e; --line: #333330;
+      --accent: #7ea2ff; --accent-text: #0d0d0d; --scam: #ff8a80; --spam: #ffcc66; --legit: #7fd99a;
+      --chip: #2a2c31;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #151515; --panel: #1f1f1f; --text: #ececea; --muted: #a3a39e; --line: #333330;
+    --accent: #7ea2ff; --accent-text: #0d0d0d; --scam: #ff8a80; --spam: #ffcc66; --legit: #7fd99a;
+    --chip: #2a2c31;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", "Noto Sans", "Noto Sans Devanagari",
+               "Noto Sans Bengali", "Noto Sans Oriya", "Noto Sans Thai", "Noto Sans Arabic", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+  h1 { font-size: 20px; margin: 0; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-top: 16px; }
+  .message { font-size: 20px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 4em; }
+  fieldset { border: 0; padding: 0; margin: 14px 0 0; }
+  legend { font-weight: 600; margin-bottom: 6px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; }
+  label.chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px;
+               background: var(--chip); border: 1px solid var(--line); cursor: pointer; font-size: 14px; }
+  label.chip input { margin: 0; }
+  .k { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); }
+  button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--panel); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  input[type="text"] { font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line);
+                       background: var(--panel); color: var(--text); }
+  textarea { width: 100%; font: inherit; padding: 8px; border-radius: 8px; border: 1px solid var(--line);
+             background: var(--bg); color: var(--text); }
+  .bar { height: 6px; background: var(--chip); border-radius: 3px; overflow: hidden; margin-top: 8px; }
+  .bar > div { height: 100%; background: var(--accent); width: 0; }
+  .label-scam { color: var(--scam); } .label-spam { color: var(--spam); } .label-legit { color: var(--legit); }
+  .nav { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; margin-top: 16px; }
+  details { margin-top: 16px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Babelguard labelling</h1>
+      <div class="muted">Works offline. Messages and labels never leave this computer.</div>
+    </div>
+    <div class="row">
+      <input type="text" id="annotator" placeholder="Your annotator ID" aria-label="Annotator ID">
+      <label class="chip"><input type="file" id="file" accept=".jsonl,.json"> Open review file</label>
+    </div>
+  </header>
+
+  <section class="panel" id="empty">
+    <p>Open a <code>review_&lt;lang&gt;.jsonl</code> file. Read each message as the person who received it would,
+      and follow <code>docs/labelling_guide.md</code>.</p>
+    <p class="muted">Keys: <span class="k">1</span> scam, <span class="k">2</span> spam, <span class="k">3</span> legit,
+      <span class="k">4</span> unsure, <span class="k">P</span> privacy flag, <span class="k">→</span>/<span class="k">Enter</span> next,
+      <span class="k">←</span> back.</p>
+  </section>
+
+  <section class="panel" id="card" tabindex="-1" hidden>
+    <div class="muted" id="meta"></div>
+    <div class="bar"><div id="progress"></div></div>
+    <p class="message" id="text" dir="auto"></p>
+
+    <fieldset>
+      <legend>Label</legend>
+      <div class="row" id="labels"></div>
+    </fieldset>
+    <fieldset>
+      <legend>Scam type <span class="muted">(what it pretends to be)</span></legend>
+      <div class="row" id="types"></div>
+    </fieldset>
+    <fieldset>
+      <legend>Lures</legend>
+      <div class="row" id="lures"></div>
+    </fieldset>
+    <fieldset>
+      <legend>Disguises seen</legend>
+      <div class="row" id="disguises"></div>
+    </fieldset>
+    <fieldset>
+      <legend>Privacy</legend>
+      <label class="chip"><input type="checkbox" id="privacy"> Still contains a real person's details <span class="k">P</span></label>
+    </fieldset>
+    <fieldset>
+      <legend>Notes</legend>
+      <textarea id="notes" rows="2" dir="auto"></textarea>
+    </fieldset>
+
+    <div class="nav">
+      <button id="prev">← Back</button>
+      <span class="muted" id="count"></span>
+      <button class="primary" id="next">Save and next →</button>
+    </div>
+  </section>
+
+  <section class="panel" id="done" hidden>
+    <p><strong>All messages in this file are labelled.</strong> Export your labels and send the file to the coordinator.</p>
+  </section>
+
+  <div class="nav">
+    <button id="export" disabled>Export labels (.jsonl)</button>
+    <button id="theme" title="Switch light or dark">Light / dark</button>
+  </div>
+
+  <details>
+    <summary>What do the labels mean?</summary>
+    <p><strong class="label-scam">scam</strong>: tries to get money, credentials, codes or personal data by deception.
+      <strong class="label-spam">spam</strong>: unwanted marketing that is honest about what it is.
+      <strong class="label-legit">legit</strong>: a genuine message from who it claims to be.
+      <strong>unsure</strong>: you cannot tell from the text; say why in the notes.</p>
+  </details>
+</main>
+
+<script>
+const LABELS = ["scam", "spam", "legit", "unsure"];
+const TYPES = ["bank_payment", "government", "delivery", "telecom_utility", "family_emergency", "prize_lottery",
+               "job_task", "investment_crypto", "loan_credit", "romance_social", "account_security", "extortion"];
+const LURES = ["time/urgency", "authority", "distraction", "need and greed", "kindness", "herd", "dishonesty"];
+const DISGUISES = ["other script / transliterated", "look-alike letters", "hidden characters or odd spacing",
+                   "misspelt brand"];
+
+let items = [], answers = {}, idx = 0, fileKey = "";
+
+function store(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {} }
+function load(key) { try { return JSON.parse(localStorage.getItem(key) || "null"); } catch (e) { return null; } }
+
+function chips(containerId, values, type, name) {
+  const box = document.getElementById(containerId);
+  box.innerHTML = "";
+  values.forEach((v, i) => {
+    const l = document.createElement("label");
+    l.className = "chip";
+    const input = document.createElement("input");
+    input.type = type; input.name = name; input.value = v;
+    l.appendChild(input);
+    const span = document.createElement("span");
+    span.textContent = v;
+    if (name === "label") span.className = "label-" + v;
+    l.appendChild(span);
+    if (name === "label") {
+      const k = document.createElement("span"); k.className = "k"; k.textContent = String(i + 1); l.appendChild(k);
+    }
+    box.appendChild(l);
+  });
+}
+
+function current() {
+  const pick = n => [...document.querySelectorAll(`input[name="${n}"]:checked`)].map(x => x.value);
+  return {
+    id: items[idx].id, lang: items[idx].lang, annotator: document.getElementById("annotator").value.trim(),
+    label: pick("label")[0] || null, scam_type: pick("type")[0] || null, lures: pick("lure"),
+    disguises: pick("disguise"), privacy_flag: document.getElementById("privacy").checked,
+    notes: document.getElementById("notes").value.trim(), time: new Date().toISOString(),
+  };
+}
+
+function show() {
+  const done = idx >= items.length;
+  document.getElementById("card").hidden = done;
+  document.getElementById("done").hidden = !done;
+  document.getElementById("export").disabled = Object.keys(answers).length === 0;
+  const n = Object.keys(answers).length;
+  document.getElementById("progress").style.width = (100 * n / items.length) + "%";
+  if (done) return;
+  const it = items[idx];
+  document.getElementById("meta").textContent =
+    `${it.lang} · ${it.variety || "native"} · ${it.id}`;
+  document.getElementById("count").textContent = `${idx + 1} of ${items.length} · ${n} labelled`;
+  document.getElementById("text").textContent = it.text;
+  const a = answers[it.id] || {};
+  document.querySelectorAll('input[name="label"]').forEach(x => x.checked = x.value === a.label);
+  document.querySelectorAll('input[name="type"]').forEach(x => x.checked = x.value === a.scam_type);
+  document.querySelectorAll('input[name="lure"]').forEach(x => x.checked = (a.lures || []).includes(x.value));
+  document.querySelectorAll('input[name="disguise"]').forEach(x => x.checked = (a.disguises || []).includes(x.value));
+  document.getElementById("privacy").checked = !!a.privacy_flag;
+  document.getElementById("notes").value = a.notes || "";
+}
+
+function save() {
+  if (idx >= items.length) return true;
+  const a = current();
+  if (!a.label) { alert("Choose a label first (1–4)."); return false; }
+  if (!a.annotator) { alert("Enter your annotator ID at the top."); return false; }
+  answers[a.id] = a;
+  store(fileKey, answers);
+  store("babelguard-annotator", a.annotator);
+  return true;
+}
+
+document.getElementById("file").addEventListener("change", async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const text = await f.text();
+  items = text.split(/\r?\n/).filter(Boolean).map(l => JSON.parse(l));
+  fileKey = "babelguard-" + f.name;
+  answers = load(fileKey) || {};
+  idx = items.findIndex(it => !answers[it.id]);
+  if (idx < 0) idx = items.length;
+  document.getElementById("empty").hidden = true;
+  show();
+  if (document.activeElement) document.activeElement.blur();
+  document.getElementById("card").focus();            // shortcuts work straight away
+});
+
+document.getElementById("next").addEventListener("click", () => { if (save()) { idx++; show(); } });
+document.getElementById("annotator").addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); e.target.blur(); document.getElementById("card").focus(); }
+});
+document.getElementById("prev").addEventListener("click", () => { if (idx > 0) { idx--; show(); } });
+
+document.getElementById("export").addEventListener("click", () => {
+  const lines = items.filter(it => answers[it.id]).map(it => JSON.stringify(answers[it.id]));
+  const blob = new Blob([lines.join("\n") + "\n"], { type: "application/jsonl" });
+  const a = document.createElement("a");
+  const who = (document.getElementById("annotator").value.trim() || "annotator").replace(/[^\w-]/g, "_");
+  a.href = URL.createObjectURL(blob);
+  a.download = `labels_${(items[0] || {}).lang || "xx"}_${who}.jsonl`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+document.getElementById("theme").addEventListener("click", () => {
+  const root = document.documentElement;
+  const dark = root.dataset.theme ? root.dataset.theme === "dark"
+                                  : matchMedia("(prefers-color-scheme: dark)").matches;
+  root.dataset.theme = dark ? "light" : "dark";
+});
+
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT" && e.target.type === "text") return;
+  if (!items.length || idx >= items.length) return;
+  if (["1", "2", "3", "4"].includes(e.key)) {
+    const input = document.querySelector(`input[name="label"][value="${LABELS[+e.key - 1]}"]`);
+    if (input) input.checked = true;
+  } else if (e.key === "p" || e.key === "P") {
+    const p = document.getElementById("privacy"); p.checked = !p.checked;
+  } else if (e.key === "ArrowRight" || e.key === "Enter") {
+    e.preventDefault(); if (save()) { idx++; show(); }
+  } else if (e.key === "ArrowLeft") {
+    if (idx > 0) { idx--; show(); }
+  }
+});
+
+chips("labels", LABELS, "radio", "label");
+chips("types", TYPES, "radio", "type");
+chips("lures", LURES, "checkbox", "lure");
+chips("disguises", DISGUISES, "checkbox", "disguise");
+document.getElementById("annotator").value = load("babelguard-annotator") || "";
+</script>
+</body>
+</html>
