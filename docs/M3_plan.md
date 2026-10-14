@@ -51,6 +51,28 @@ This load is easier than the real world, since each synthetic campaign has its o
 its own scammer details. Real-world cross-language accuracy is measured separately in M2 (85% at
 rank 1).
 
+### M3.1 at 1,000,000 messages (14 Oct 2026)
+
+Same generator and settings, ten times the stream: 13,116 true campaigns. One core of an Intel
+Xeon at 2.80 GHz, plain Python.
+
+| | 100,000 | 1,000,000 |
+|---|---|---|
+| Throughput | 788 messages/s | **803 messages/s** (about 69 million a day per core) |
+| Latency p50 / p99 | 1.1 / 3.3 ms | **1.1 / 3.3 ms** |
+| p99 in each tenth of the stream | | 2.9 to 3.6 ms: no slowdown as the indexes grow |
+| B-cubed precision / recall / F1 | 0.9995 / 0.9919 / 0.9957 | **0.9974 / 0.9930 / 0.9952** |
+| Campaigns found / true | 2,214 / 1,872 | 15,258 / 13,116 |
+| Peak memory | | 5.2 GB (about 5 KB per message) |
+| Longest single pause | 598 ms | 4.3 s |
+
+Per-message cost stays flat from 100,000 to 1,000,000 messages, because the LSH buckets keep a
+bounded number of representatives and indicator lists are capped. Two things must be fixed
+before 100M: memory (Python objects per message; the next step is compact arrays for union-find
+and signatures, and dropping shingle sets of non-representatives, which already happens) and the
+rare multi-second pauses, which grow with the heap and are most likely Python's cyclic garbage
+collector walking millions of objects.
+
 ### M3.5 durable store and recovery (14 Oct 2026)
 
 `babelguard/store.py`: every message goes to an append-only log (one CRC32-checked record per
