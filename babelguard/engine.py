@@ -13,6 +13,7 @@ for months on a stream:
 
 `ingest` returns the campaign a message joined and why, which is what an analyst or an alert needs.
 """
+import gc
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -21,7 +22,7 @@ import numpy as np
 
 from .campaigns import legit
 from .indicators import extract, link_key
-from .lsh import MinHash
+from .lsh import MinHash, hashes, jaccard_hashes
 from .normalize import normalize
 
 
@@ -45,14 +46,14 @@ class Assignment:
 
 class CampaignEngine:
     def __init__(self, text_threshold=0.6, bands=21, rows=3, reps=4, max_indicator_campaigns=50,
-                 embed=None, embed_threshold=0.85, ann_k=5, seed=1):
+                 embed=None, embed_threshold=0.85, ann_k=5, seed=1, gc_freeze_every=20000):
         self.mh = MinHash(bands * rows, seed)
         self.bands, self.rows, self.reps = bands, rows, reps
         self.text_threshold = text_threshold
         self.max_indicator_campaigns = max_indicator_campaigns
         self.embed, self.embed_threshold, self.ann_k = embed, embed_threshold, ann_k
         self.parent = []                     # union-find over message ids
-        self.shingles = []                   # shingle set per message (only representatives keep theirs)
+        self.shingles = []                   # shingle hashes per message (only representatives keep theirs)
         self.buckets = [dict() for _ in range(bands)]
         self.by_indicator = defaultdict(list)        # link key -> message ids (bounded)
         self.indicator_campaigns = defaultdict(set)  # link key -> campaign roots seen with it
@@ -60,6 +61,9 @@ class CampaignEngine:
         self.campaigns = {}
         self.vectors = []                            # embeddings, if any
         self.stats = defaultdict(int)
+        # The engine's state is millions of long-lived objects; Python's full garbage collection
+        # rescans all of them and stalls ingest for seconds. Freezing them moves them out of its scans.
+        self.gc_freeze_every = gc_freeze_every
 
     # ---- union-find -------------------------------------------------------------------------
     def find(self, x):
@@ -118,19 +122,17 @@ class CampaignEngine:
 
         # 2. near-copy text, through the streaming LSH index
         canon = normalize(text).canonical
-        sh = {canon[k:k + 5] for k in range(max(1, len(canon) - 4))} if canon else set()
+        sh = hashes({canon[k:k + 5] for k in range(max(1, len(canon) - 4))}) if canon else None
         keep = False
-        if sh:
-            sig = self.mh.signature(sh)
+        if sh is not None:
+            sig = self.mh.signature_of_hashes(sh)
             for b in range(self.bands):
                 key = sig[b * self.rows:(b + 1) * self.rows].tobytes()
                 reps = self.buckets[b].setdefault(key, [])
                 for j in reps:
                     if self.find(j) == self.find(i):
                         continue
-                    other = self.shingles[j]
-                    inter = len(sh & other)
-                    if inter / (len(sh) + len(other) - inter) >= self.text_threshold:
+                    if jaccard_hashes(sh, self.shingles[j]) >= self.text_threshold:
                         self._union(i, j)
                         reasons.append("text")
                         break
@@ -156,6 +158,8 @@ class CampaignEngine:
         c.last_seen = max(c.last_seen, t)
         c.languages.add(lang)
         self.stats["messages"] += 1
+        if self.gc_freeze_every and self.stats["messages"] % self.gc_freeze_every == 0:
+            gc.freeze()
         return Assignment(message=i, campaign=root, new=(c.size == 1), reasons=sorted(set(reasons)))
 
     def campaign_of(self, i):

@@ -27,9 +27,26 @@ class MinHash:
     def signature(self, shingles):
         if not shingles:
             return np.full(self.num_perm, np.iinfo(np.uint64).max, dtype=np.uint64)
-        x = np.fromiter((_h64(s) % _P for s in shingles), dtype=np.uint64, count=len(shingles))
+        return self.signature_of_hashes(hashes(shingles))
+
+    def signature_of_hashes(self, h):
+        """Signature from `hashes(shingles)`, so a caller that keeps the hashes hashes only once."""
+        if not len(h):
+            return np.full(self.num_perm, np.iinfo(np.uint64).max, dtype=np.uint64)
+        x = h % np.uint64(_P)
         v = (self.a[:, None] * x[None, :] + self.b[:, None]) % np.uint64(_P)
         return v.min(axis=1)
+
+
+def hashes(shingles):
+    """Sorted, distinct 64-bit hashes of a shingle set: a compact stand-in for the set (8 bytes per
+    shingle instead of a Python string), deterministic across processes, so it survives a restart."""
+    return np.unique(np.fromiter((_h64(s) for s in shingles), dtype=np.uint64, count=len(shingles)))
+
+
+def jaccard_hashes(a, b):
+    inter = np.intersect1d(a, b, assume_unique=True).size
+    return inter / (len(a) + len(b) - inter)
 
 
 def near_copies(sets, threshold=0.6, bands=21, rows=3, reps=8, seed=1):
