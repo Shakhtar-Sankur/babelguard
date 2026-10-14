@@ -6,8 +6,9 @@ domain or short link) or when their text is a near copy. Linked messages form on
 shared operator (a bank's real domain quoted in thousands of scams), so they are ignored: a
 default allowlist of well-known legitimate domains plus a document-frequency cutoff.
 
-Cross-language text similarity (the same script translated) plugs in through `embed`, a function
-from a list of texts to unit vectors; M2 adds a multilingual sentence encoder there.
+Cross-language similarity plugs in through `embed`, a function from a list of texts to unit vectors
+(`babelguard.embed.Encoder`, a multilingual sentence encoder). Each message is compared only with its
+`neighbours` nearest messages, so linking by meaning stays fast on large collections.
 """
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -60,7 +61,8 @@ class Campaign:
     links: list = field(default_factory=list)      # (i, j, reason) edges that formed it
 
 
-def link(messages, max_df=0.2, text_threshold=0.6, embed=None, embed_threshold=0.85, country=None):
+def link(messages, max_df=0.2, text_threshold=0.6, embed=None, embed_threshold=0.85, country=None,
+         neighbours=10):
     """Group messages into campaigns. Returns campaigns, largest first; singletons included."""
     n = len(messages)
     dsu, edges = _DSU(n), []
@@ -85,12 +87,14 @@ def link(messages, max_df=0.2, text_threshold=0.6, embed=None, embed_threshold=0
                 edges.append((i, j, "text"))
                 dsu.union(i, j)
     if embed is not None and n > 1:
-        v = np.asarray(embed(messages), dtype=float)
-        sim = v @ v.T
+        from .embed import top_k
+        v = np.asarray(embed(messages), dtype=np.float32)
+        nn = top_k(v, v, k=min(neighbours + 1, n))
         for i in range(n):
-            for j in range(i + 1, n):
-                if dsu.find(i) != dsu.find(j) and sim[i, j] >= embed_threshold:
-                    edges.append((i, j, "meaning"))
+            for j in nn[i]:
+                j = int(j)
+                if j != i and dsu.find(i) != dsu.find(j) and float(v[i] @ v[j]) >= embed_threshold:
+                    edges.append((min(i, j), max(i, j), "meaning"))
                     dsu.union(i, j)
     groups = defaultdict(list)
     for i in range(n):
