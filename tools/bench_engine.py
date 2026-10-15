@@ -38,12 +38,16 @@ def main(n=100000, c=2000, out="out"):
     e = CampaignEngine()
     lat = np.empty(n)
     ids = np.empty(n, dtype=np.int64)
+    step = max(1, n // 20)
     t0 = time.perf_counter()
     for k, (text, lang, camp, t) in enumerate(stream(recs, n_messages=n, n_campaigns=c, seed=0)):
         truth[k] = camp
         s = time.perf_counter()
         ids[k] = e.ingest(text, lang, t).message
         lat[k] = time.perf_counter() - s
+        if (k + 1) % step == 0:                        # progress on stderr, so the JSON on stdout stays clean
+            el = time.perf_counter() - t0
+            print(f"{k + 1:,} messages, {el / 60:.1f} min, {(k + 1) / el:.0f} msg/s", file=sys.stderr, flush=True)
     wall = time.perf_counter() - t0
     engine_mb = _rss_mb() - rss0
     pred = [e.find(int(i)) for i in ids]
