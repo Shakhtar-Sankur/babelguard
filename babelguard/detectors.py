@@ -4,6 +4,8 @@
   floor, not a contender: it shows what a filter built for English does to everyone else.
 - `HFClassifier`: any Hugging Face text-classification model (multilingual scam and phishing
   detectors, guard models), imported lazily.
+- `LLMJudge`: an instruction-tuned chat model asked whether a message is a scam; the score is the
+  probability it gives to "Yes" against "No" as the first word of its answer.
 - `CallableDetector`: wraps any function, such as a call to an LLM API with a fixed prompt; the
   caller supplies the key and the budget.
 
@@ -67,6 +69,47 @@ class HFClassifier(Detector):
         out = []
         for res in self.pipe(texts, batch_size=self.batch_size):
             out.append(sum(r["score"] for r in res if r["label"].lower() in self.positive))
+        return out
+
+
+class LLMJudge(Detector):
+    """An instruction-tuned chat model as a zero-shot scam detector, the way many apps now filter.
+
+    The prompt is in English for every language (as most deployments are); the message is passed
+    unchanged. Score = P("Yes") / (P("Yes") + P("No")) for the first token of the answer.
+    """
+    PROMPT = ("You check text messages for a phone user. Is the following message a scam, phishing "
+              "or fraud attempt? Answer with one word, Yes or No.\n\nMessage:\n{text}")
+
+    def __init__(self, model, batch_size=16, max_length=384, device=None, normalize_first=False):
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        self.name, self.normalize_first, self.batch_size, self.max_length = model, normalize_first, batch_size, max_length
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.tok = AutoTokenizer.from_pretrained(model)
+        self.tok.padding_side = "left"
+        if self.tok.pad_token is None:
+            self.tok.pad_token = self.tok.eos_token
+        dtype = torch.float16 if self.device == "cuda" else torch.float32
+        self.model = AutoModelForCausalLM.from_pretrained(model, dtype=dtype).to(self.device).eval()
+        ids = lambda w: self.tok.encode(w, add_special_tokens=False)[0]
+        self.yes, self.no = ids("Yes"), ids("No")
+
+    def _prompt(self, text):
+        msg = [{"role": "user", "content": self.PROMPT.format(text=text[:2000])}]
+        return self.tok.apply_chat_template(msg, tokenize=False, add_generation_prompt=True)
+
+    def score(self, texts):
+        import torch
+        out = []
+        for i in range(0, len(texts), self.batch_size):
+            batch = [self._prompt(t) for t in texts[i:i + self.batch_size]]
+            enc = self.tok(batch, return_tensors="pt", padding=True, truncation=True,
+                           max_length=self.max_length).to(self.device)
+            with torch.no_grad():
+                logits = self.model(**enc).logits[:, -1, :].float()
+            pair = torch.stack([logits[:, self.yes], logits[:, self.no]], dim=1).softmax(dim=1)
+            out.extend(pair[:, 0].tolist())
         return out
 
 

@@ -4,6 +4,11 @@
     python tools/protection_gap.py keywords            # English keyword baseline
     python tools/protection_gap.py keywords+normalize  # the same, after script-aware cleaning
     python tools/protection_gap.py hf:<model-id>       # a Hugging Face text classifier
+    python tools/protection_gap.py hf:<model-id>@LABEL_1,LABEL_3   # ... with its scam labels named
+    python tools/protection_gap.py llm:<model-id>      # a chat model asked "is this a scam?"
+
+Set BABELGUARD_DEVICE=0 to run models on the first GPU. Sources that are not downloaded are
+skipped (MOZ-Smishing is only ever evaluated locally).
 
 Labels are the sources' own and unverified (see docs/M1_plan.md): these are first estimates, to be
 replaced by native-speaker-checked labels. A message is flagged when its score is at least 0.5.
@@ -16,7 +21,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from babelguard.dataset import load_bengali_smishing, load_imc25, load_moz_smishing, load_singlish  # noqa: E402
-from babelguard.detectors import HFClassifier, KeywordBaseline  # noqa: E402
+from babelguard.detectors import HFClassifier, KeywordBaseline, LLMJudge  # noqa: E402
 from babelguard.protection import by_group, rates  # noqa: E402
 
 ROOT = "data/private"
@@ -27,14 +32,23 @@ def detector(spec):
         return KeywordBaseline()
     if spec == "keywords+normalize":
         return KeywordBaseline(normalize_first=True)
+    device = int(os.environ.get("BABELGUARD_DEVICE", "-1"))
     if spec.startswith("hf:"):
-        return HFClassifier(spec[3:])
+        model, _, labels = spec[3:].partition("@")
+        kw = {"positive": tuple(labels.split(","))} if labels else {}
+        return HFClassifier(model, device=device, **kw)
+    if spec.startswith("llm:"):
+        return LLMJudge(spec[4:], device="cuda" if device >= 0 else "cpu")
     raise SystemExit(f"unknown detector {spec}")
 
 
 def main(spec="keywords", out="out"):
-    recs = (load_imc25(f"{ROOT}/imc25.csv") + load_bengali_smishing(f"{ROOT}/bengali")
-            + load_moz_smishing(f"{ROOT}/moz/test.csv") + load_singlish(f"{ROOT}/singlish/Translations.xlsx"))
+    recs = []
+    for path, load in [(f"{ROOT}/imc25.csv", load_imc25), (f"{ROOT}/bengali", load_bengali_smishing),
+                       (f"{ROOT}/moz/test.csv", load_moz_smishing),
+                       (f"{ROOT}/singlish/Translations.xlsx", load_singlish)]:
+        if os.path.exists(path):
+            recs += load(path)
     recs = [r for r in recs if r.label in ("scam", "legit") and r.lang != "und"]
     det = detector(spec)
     t0 = time.time()
@@ -44,7 +58,7 @@ def main(spec="keywords", out="out"):
     report = {"detector": det.name, "normalize_first": det.normalize_first, "messages": len(recs),
               "overall": overall, "seconds": round(time.time() - t0, 1), "languages": table}
     os.makedirs(out, exist_ok=True)
-    name = spec.replace(":", "_").replace("/", "_").replace("+", "_")
+    name = spec.replace(":", "_").replace("/", "_").replace("+", "_").replace("@", "_").replace(",", "_")
     json.dump(report, open(os.path.join(out, f"protection_{name}.json"), "w"), indent=1)
     return report
 
