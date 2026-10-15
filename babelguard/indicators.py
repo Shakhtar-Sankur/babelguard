@@ -218,10 +218,11 @@ def link_key(ind):
     return (ind.kind, ind.value)
 
 
-def extract(message, country=None):
+def extract(message, country=None, norm=None):
     """Set of Indicators in a message (any language). `country` (ISO 3166 alpha-2) is a hint
-    for numbers written without a country code."""
-    canon = refang(normalize(message).canonical)
+    for numbers written without a country code. `norm` is `normalize(message)` if the caller has it."""
+    norm = normalize(message) if norm is None else norm
+    canon = refang(norm.canonical)
     found, spans = set(), []
     for m in EMAIL_RE.finditer(canon):
         found.add(Indicator("email", m.group().lower()))
@@ -237,7 +238,7 @@ def extract(message, country=None):
         if ind:
             found.add(ind)
             spans.append(m.span())
-    original = refang(normalize(message).text)        # wallets are case-sensitive
+    original = refang(norm.text)                      # wallets are case-sensitive
     for m in ETH_RE.finditer(original):
         found.add(Indicator("eth", m.group().lower()))
     for m in BTC_BECH_RE.finditer(original):

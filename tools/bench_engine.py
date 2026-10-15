@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from babelguard.dataset import group_templates, load_imc25  # noqa: E402
 from babelguard.engine import CampaignEngine  # noqa: E402
+from babelguard.parallel import ingest_parallel  # noqa: E402
 from babelguard.loadgen import bcubed, stream  # noqa: E402
 
 
@@ -28,8 +29,9 @@ def _rss_mb():
     return int(open("/proc/self/statm").read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / 2**20
 
 
-def main(n=100000, c=2000, out="out"):
-    n, c = int(n), int(c)
+def main(n=100000, c=2000, workers=0, out="out"):
+    """workers=0 runs one process; workers=W computes features on W worker processes."""
+    n, c, workers = int(n), int(c), int(workers)
     recs = load_imc25("data/private/imc25.csv")
     group_templates(recs)
     truth = np.empty(n, dtype=np.int64)          # messages are generated as they are fed, not held
@@ -40,14 +42,30 @@ def main(n=100000, c=2000, out="out"):
     ids = np.empty(n, dtype=np.int64)
     step = max(1, n // 20)
     t0 = time.perf_counter()
-    for k, (text, lang, camp, t) in enumerate(stream(recs, n_messages=n, n_campaigns=c, seed=0)):
-        truth[k] = camp
-        s = time.perf_counter()
-        ids[k] = e.ingest(text, lang, t).message
-        lat[k] = time.perf_counter() - s
-        if (k + 1) % step == 0:                        # progress on stderr, so the JSON on stdout stays clean
-            el = time.perf_counter() - t0
-            print(f"{k + 1:,} messages, {el / 60:.1f} min, {(k + 1) / el:.0f} msg/s", file=sys.stderr, flush=True)
+    src = stream(recs, n_messages=n, n_campaigns=c, seed=0)
+    if workers:
+        # pipelined: "latency" is then the time between consecutive results, not one message's
+        def feed():
+            for k, (text, lang, camp, t) in enumerate(src):
+                truth[k] = camp
+                yield text, lang, t, None
+        last = time.perf_counter()
+        for k, a in enumerate(ingest_parallel(e, feed(), workers=workers)):
+            ids[k] = a.message
+            now = time.perf_counter()
+            lat[k], last = now - last, now
+            if (k + 1) % step == 0:
+                el = now - t0
+                print(f"{k + 1:,} messages, {el / 60:.1f} min, {(k + 1) / el:.0f} msg/s", file=sys.stderr, flush=True)
+    else:
+        for k, (text, lang, camp, t) in enumerate(src):
+            truth[k] = camp
+            s = time.perf_counter()
+            ids[k] = e.ingest(text, lang, t).message
+            lat[k] = time.perf_counter() - s
+            if (k + 1) % step == 0:                    # progress on stderr, so the JSON on stdout stays clean
+                el = time.perf_counter() - t0
+                print(f"{k + 1:,} messages, {el / 60:.1f} min, {(k + 1) / el:.0f} msg/s", file=sys.stderr, flush=True)
     wall = time.perf_counter() - t0
     engine_mb = _rss_mb() - rss0
     pred = [e.find(int(i)) for i in ids]
@@ -65,11 +83,12 @@ def main(n=100000, c=2000, out="out"):
            "process_peak_memory_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1),
            "latency_ms_by_tenth": [round(float(np.percentile(lat[k * n // 10:(k + 1) * n // 10], 99)) * 1e3, 3)
                                    for k in range(10)],
-           "hardware": f"{platform.processor() or platform.machine()}, 1 core (Python)"}
+           "workers": workers,
+           "hardware": f"{platform.processor() or platform.machine()}, " + (f"{workers} feature workers + 1 apply process" if workers else "1 core") + " (Python)"}
     os.makedirs(out, exist_ok=True)
-    json.dump(rep, open(os.path.join(out, f"bench_engine_{n}.json"), "w"), indent=1)
+    json.dump(rep, open(os.path.join(out, f"bench_engine_{n}" + (f"_w{workers}" if workers else "") + ".json"), "w"), indent=1)
     return rep
 
 
 if __name__ == "__main__":
-    print(json.dumps(main(*sys.argv[1:3]), indent=1))
+    print(json.dumps(main(*sys.argv[1:4]), indent=1))

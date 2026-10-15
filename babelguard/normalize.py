@@ -13,6 +13,7 @@ removal, because a disguise attempt is itself evidence.
     n.canonical   # comparison form: NFKC, casefolded, ASCII digits, look-alikes folded
     n.anomalies   # Counter of what was removed or folded, e.g. {"zwsp": 1}
 """
+import functools
 import json
 import os
 import re
@@ -53,6 +54,7 @@ def confusables():
     return _CONF
 
 
+@functools.lru_cache(maxsize=None)              # pure, and messages reuse a few hundred characters
 def script(ch):
     """Coarse script of one character: the first word of its Unicode name for letters and marks
     (LATIN, CYRILLIC, DEVANAGARI, ORIYA, ...), EMOJI, INHERITED for generic combining marks,

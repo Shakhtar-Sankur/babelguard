@@ -97,6 +97,38 @@ Same 1,000,000-message stream, same machine:
 At 100,000 messages engine memory fell from 3.7 KB to 0.35 KB per message (365 MB to 34 MB).
 At this rate 100 million messages need about 20 GB, within one server.
 
+### Toward 100 million messages: parallel ingest (15 Oct 2026)
+
+At 100M messages the limit is time, not memory: 0.21 KB per message is about 20 GB, which fits
+one server, but 100M messages at 786 per second on one core take 35 hours. Profiling 20,000
+messages showed where the time goes: 92% is per-message feature work (cleaning, scammer details,
+shingle hashes, MinHash band keys) that depends on nothing but the message; 8% is linking it into
+the campaigns, which must happen in arrival order. Two changes follow.
+
+- **Less work per message.** Each message was cleaned three times (once for linking, twice inside
+  indicator extraction), and the character-to-script lookup ran 7 million times uncached. Cleaning
+  once and caching the lookup: 788 to **1,159 messages/s** on one core, with identical results.
+- **Features on many cores.** `CampaignEngine.features` is now a pure function and `apply` the
+  ordered step; `babelguard/parallel.py` computes features in worker processes and applies them in
+  order in one process, so the campaigns are identical to the serial engine's
+  (`tests/test_parallel.py` checks every message's campaign, size, languages and details).
+
+100,000 synthetic messages (same stream and seed as above), 4-core Intel Xeon at 2.8 GHz:
+
+| | messages/s | B-cubed precision / recall | campaigns found |
+|---|---|---|---|
+| one core, before | 788 | 0.9995 / 0.9919 | 2,214 |
+| one core, after | 1,159 | 0.9995 / 0.9919 | 2,214 |
+| 1 feature worker + apply | 1,464 | identical | identical |
+| 2 feature workers + apply | 2,854 | identical | identical |
+| 3 feature workers + apply | **4,057** | identical | identical |
+
+At 4,057 messages/s one 4-core machine ingests 100M messages in about 7 hours. The apply step is
+about a tenth of the work, so one apply process keeps up with roughly ten feature workers; beyond
+that, the apply step is split by key (indicator keys and LSH bands hashed to shards, a shared
+union-find over message ids), which is the next step, together with running the durable log in
+front of the parallel path.
+
 ### M3.5 durable store and recovery (14 Oct 2026)
 
 `babelguard/store.py`: every message goes to an append-only log (one CRC32-checked record per

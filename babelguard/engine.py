@@ -44,6 +44,28 @@ class Assignment:
     reasons: list
 
 
+@dataclass(frozen=True)
+class Features:
+    """What `apply` needs from a message: (link key, label) of each scammer detail, in a fixed
+    order, and the message's shingle hashes and LSH band keys (None for an empty message)."""
+    indicators: tuple
+    shingles: object
+    band_keys: tuple
+
+
+def message_features(text, country, mh, bands, rows):
+    """Pure per-message work: the same input always gives the same Features, in any process."""
+    norm = normalize(text)
+    inds = sorted(((link_key(ind), f"{ind.kind}:{ind.value}") for ind in extract(text, country, norm=norm)
+                   if not legit(ind)), key=lambda x: (x[0], x[1]))
+    canon = norm.canonical
+    if not canon:
+        return Features(tuple(inds), None, ())
+    sh = hashes({canon[k:k + 5] for k in range(max(1, len(canon) - 4))})
+    sig = mh.signature_of_hashes(sh)
+    return Features(tuple(inds), sh, tuple(sig[b * rows:(b + 1) * rows].tobytes() for b in range(bands)))
+
+
 class CampaignEngine:
     def __init__(self, text_threshold=0.6, bands=21, rows=3, reps=4, max_indicator_campaigns=50,
                  embed=None, embed_threshold=0.85, ann_k=5, seed=1, gc_freeze_every=20000):
@@ -89,7 +111,16 @@ class CampaignEngine:
         return ra
 
     # ---- ingest -----------------------------------------------------------------------------
+    # Ingest is split in two. `features` is a pure function of the message (cleaning, scammer
+    # details, shingle hashes, LSH band keys): about 90% of the work, and it can run on any core
+    # or machine. `apply` links the message into the campaigns and must run in arrival order.
+    def features(self, text, country=None):
+        return message_features(text, country, self.mh, self.bands, self.rows)
+
     def ingest(self, text, lang="und", t=None, country=None):
+        return self.apply(self.features(text, country), lang, t, text=text)
+
+    def apply(self, feats, lang="und", t=None, text=None):
         t = time.time() if t is None else t
         i = len(self.parent)
         self.parent.append(i)
@@ -97,11 +128,8 @@ class CampaignEngine:
         reasons, linked = [], set()
 
         # 1. indicators
-        for ind in extract(text, country):
-            if legit(ind):
-                continue
-            key = link_key(ind)
-            self.campaigns[self.find(i)].indicators.add(f"{ind.kind}:{ind.value}")
+        for key, label in feats.indicators:
+            self.campaigns[self.find(i)].indicators.add(label)
             if key in self.blocked:
                 continue
             for j in self.by_indicator[key][:8]:
@@ -121,13 +149,10 @@ class CampaignEngine:
                     self.stats["indicators_blocked"] += 1
 
         # 2. near-copy text, through the streaming LSH index
-        canon = normalize(text).canonical
-        sh = hashes({canon[k:k + 5] for k in range(max(1, len(canon) - 4))}) if canon else None
+        sh = feats.shingles
         keep = False
         if sh is not None:
-            sig = self.mh.signature_of_hashes(sh)
-            for b in range(self.bands):
-                key = sig[b * self.rows:(b + 1) * self.rows].tobytes()
+            for b, key in enumerate(feats.band_keys):
                 reps = self.buckets[b].setdefault(key, [])
                 for j in reps:
                     if self.find(j) == self.find(i):
@@ -143,6 +168,8 @@ class CampaignEngine:
 
         # 3. meaning, through the nearest-neighbour index
         if self.embed is not None:
+            if text is None:
+                raise ValueError("linking by meaning needs the message text")
             v = np.asarray(self.embed([text])[0], dtype=np.float32)
             if self.vectors:
                 m = np.stack(self.vectors)
