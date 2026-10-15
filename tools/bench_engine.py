@@ -40,7 +40,7 @@ def main(n=100000, c=2000, workers=0, out="out"):
     e = CampaignEngine()
     lat = np.empty(n)
     ids = np.empty(n, dtype=np.int64)
-    step = max(1, n // 20)
+    step = max(1, n // 100)                     # progress every 1%
     t0 = time.perf_counter()
     src = stream(recs, n_messages=n, n_campaigns=c, seed=0)
     if workers:
@@ -56,7 +56,7 @@ def main(n=100000, c=2000, workers=0, out="out"):
             lat[k], last = now - last, now
             if (k + 1) % step == 0:
                 el = now - t0
-                print(f"{k + 1:,} messages, {el / 60:.1f} min, {(k + 1) / el:.0f} msg/s", file=sys.stderr, flush=True)
+                print(f"{k + 1:,} messages, {el / 60:.1f} min, {(k + 1) / el:.0f} msg/s, about {(n - k - 1) * el / (k + 1) / 60:.0f} min left, {_rss_mb():.0f} MB", file=sys.stderr, flush=True)
     else:
         for k, (text, lang, camp, t) in enumerate(src):
             truth[k] = camp
@@ -65,8 +65,9 @@ def main(n=100000, c=2000, workers=0, out="out"):
             lat[k] = time.perf_counter() - s
             if (k + 1) % step == 0:                    # progress on stderr, so the JSON on stdout stays clean
                 el = time.perf_counter() - t0
-                print(f"{k + 1:,} messages, {el / 60:.1f} min, {(k + 1) / el:.0f} msg/s", file=sys.stderr, flush=True)
+                print(f"{k + 1:,} messages, {el / 60:.1f} min, {(k + 1) / el:.0f} msg/s, about {(n - k - 1) * el / (k + 1) / 60:.0f} min left, {_rss_mb():.0f} MB", file=sys.stderr, flush=True)
     wall = time.perf_counter() - t0
+    print(f"ingest done in {wall / 60:.1f} min; scoring against the true campaigns", file=sys.stderr, flush=True)
     engine_mb = _rss_mb() - rss0
     pred = [e.find(int(i)) for i in ids]
     p, r, f = bcubed(pred, truth.tolist())
